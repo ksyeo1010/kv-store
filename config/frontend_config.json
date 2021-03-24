@@ -1,0 +1,7 @@
+{
+  "ClientAPIListenAddr": ":8000",
+  "StorageAPIListenAddr": ":8001",
+  "Storage":":8011",
+  "TracerServerAddr": ":6666",
+  "TracerSecret": ""
+}
