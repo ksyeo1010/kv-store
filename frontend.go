@@ -36,7 +36,7 @@ type FrontEndGet struct {
 
 type FrontEndGetResult struct {
 	Key   string
-	Value string
+	Value *string
 	Err   bool
 }
 

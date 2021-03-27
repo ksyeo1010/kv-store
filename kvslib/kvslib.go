@@ -66,7 +66,7 @@ func NewKVS() *KVS {
 // have capacity ChCapacity and must be used by kvslib to deliver all solution
 // notifications. If there is an issue with connecting, this should return
 // an appropriate err value, otherwise err should be set to nil.
-func (d *KVS) Initialize(frontEndAddr string, chCapacity uint) (NotifyChannel, error) {
+func (d *KVS) Initialize(localTracer *tracing.Tracer, clientId string, frontEndAddr string, chCapacity uint) (NotifyChannel, error) {
 	return d.notifyCh, errors.New("not implemented")
 }
 
@@ -89,6 +89,6 @@ func (d *KVS) Put(tracer *tracing.Tracer, clientId string, key string, value str
 // from delivering any solutions via the notify-channel. If there is an issue
 // with stopping, this should return an appropriate err value, otherwise err
 // should be set to nil.
-func (d *KVS) Close(tracer *tracing.Tracer) error {
+func (d *KVS) Close() error {
 	return errors.New("not implemented")
 }
