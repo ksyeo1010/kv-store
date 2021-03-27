@@ -1,7 +1,8 @@
 {
   "StorageID": "storage1",
-  "ListenAddr": ":8011",
-  "FrontEndAddr": ":8000",
+  "StorageAdd": ":8011",
+  "FrontEndAddr": ":8001",
   "TracerServerAddr": ":6666",
-  "TracerSecret": ""
+  "TracerSecret": "",
+  "DiskPath" : "/tmp/newdir/"
 }

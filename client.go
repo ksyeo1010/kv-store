@@ -2,6 +2,7 @@ package distkvs
 
 import (
 	"errors"
+
 	"example.org/cpsc416/a5/kvslib"
 	"github.com/DistributedClocks/tracing"
 )
@@ -9,11 +10,10 @@ import (
 const ChCapacity = 10
 
 type ClientConfig struct {
-	ClientId         string
+	ClientID         string
 	FrontEndAddr     string
 	TracerServerAddr string
 	TracerSecret     []byte
-	ClientID         string
 }
 
 type Client struct {
@@ -43,5 +43,5 @@ func (c *Client) Put(clientId string, key string, value string) (uint32, error) 
 }
 
 func (c *Client) Close() error {
-	return c.kvs.Close(c.tracer)
+	return c.kvs.Close()
 }

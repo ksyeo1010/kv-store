@@ -36,7 +36,7 @@ type StorageGet struct {
 
 type StorageGetResult struct {
 	Key   string
-	Value string
+	Value *string
 }
 
 type Storage struct {
