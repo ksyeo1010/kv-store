@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/DistributedClocks/tracing"
 	"io/ioutil"
+	"log"
+	"net"
 	"net/rpc"
 	"os"
 	"sync"
@@ -72,7 +74,13 @@ type Storage struct {
 	filePath        string
 	tracer			*tracing.Tracer
 	memory			*Memory
-	mu               sync.Mutex
+}
+
+type StorageRPCHandler struct {
+	tracer          *tracing.Tracer
+	memory			*Memory
+	filePath        string
+	mu              sync.Mutex
 }
 
 func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string, strace *tracing.Tracer) error {
@@ -91,17 +99,50 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	s.tracer = strace
 	s.memory = NewMemory()
 
+	// initialize RPC
+	err = s.initializeRPC()
+	if err != nil {
+		return err
+	}
+
+	// read storage from disk into memory
 	trace := s.tracer.CreateTrace()
-	s.readStorage(trace)
+	err = s.readStorage(trace)
+	if err != nil {
+		return fmt.Errorf("error reading storage from disk: %s", err)
+	}
+
+	// call frontend with port
+	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{StorageAddr: storageAddr}, &ConnectReply{})
+
+	return nil
+}
+
+func (s *Storage) initializeRPC() error {
+	server := rpc.NewServer()
+	err := server.Register(&StorageRPCHandler{
+		tracer: 	s.tracer,
+		memory:     s.memory,
+		filePath:   s.filePath,
+	})
+
+	if err != nil {
+		return fmt.Errorf("format of storage RPC is not correct: %s", err)
+	}
+
+	listener, e := net.Listen("tcp", s.storageAddr)
+	if e != nil {
+		return fmt.Errorf("listen error: %s", e)
+	}
+
+	log.Printf("Serving Storage RPCs on port %s", s.storageAddr)
+	go server.Accept(listener)
 
 	return nil
 }
 
 // readStorage loads disk into memory
 func (s *Storage) readStorage(trace *tracing.Trace) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// check if file exists
 	if _, err := os.Stat(s.filePath); os.IsNotExist(err) {
 		// create file if it doesn't exist
@@ -144,7 +185,7 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 
 // Get is a blocking async RPC from the Frontend
 // fetching the value from memory
-func (s *Storage) Get(args StorageGetArgs, reply *StorageGetReply) {
+func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) {
 	trace := s.tracer.ReceiveToken(args.Token)
 
 	trace.RecordAction(StorageGet{
@@ -164,7 +205,7 @@ func (s *Storage) Get(args StorageGetArgs, reply *StorageGetReply) {
 
 // Put is a blocking async RPC from the Frontend
 // saving a new value to storage and memory
-func (s *Storage) Put(args StoragePutArgs, reply *StoragePutReply) {
+func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) {
 	trace := s.tracer.ReceiveToken(args.Token)
 
 	trace.RecordAction(StoragePut{
@@ -183,7 +224,7 @@ func (s *Storage) Put(args StoragePutArgs, reply *StoragePutReply) {
 	reply.Error = err
 }
 
-func (s *Storage) updateKVS(key string, value string) error {
+func (s *StorageRPCHandler) updateKVS(key string, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

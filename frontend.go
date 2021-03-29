@@ -86,6 +86,8 @@ type ConnectArgs struct {
 	StorageAddr		string	
 }
 
+type ConnectReply struct {}
+
 type FrontEndRPCHandler struct {
 	ftrace			*tracing.Tracer
 	localTrace		*tracing.Trace
@@ -118,13 +120,13 @@ func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, 
 		return fmt.Errorf("failed to listen on %s: %s", clientAPIListenAddr, clientListener)
 	}
 
-	// storageListener, err := net.Listen("tcp", storageAPIListenAddr)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to listen on %s: %s", storageAPIListenAddr, storageListener)
-	// }
+	storageListener, err := net.Listen("tcp", storageAPIListenAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %s", storageAPIListenAddr, storageListener)
+	}
 
 	server.Accept(clientListener)
-	// server.Accept(storageListener)
+	server.Accept(storageListener)
 
 	return nil
 }
@@ -227,7 +229,7 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	return nil
 }
 
-func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply struct{}) error {
+func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) error {
 	storage, err := rpc.Dial("tcp", args.StorageAddr)
 
 	if err != nil {
@@ -235,6 +237,8 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply struct{}) error {
 	}
 
 	f.storage = storage
+
+	f.localTrace.RecordAction(FrontEndStorageStarted{})
 
 	return nil
 }
