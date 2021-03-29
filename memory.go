@@ -33,3 +33,10 @@ func (m *Memory) Put(key string, value string) {
 
 	m.kvs[key] = value
 }
+
+func (m *Memory) Load(mem map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.kvs = mem
+}
