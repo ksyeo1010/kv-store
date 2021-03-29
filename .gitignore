@@ -1,1 +1,11 @@
+# MacOS
 .DS_Store
+
+# binaries
+client
+frontend
+storage
+tracing-server
+
+# logs
+*.log

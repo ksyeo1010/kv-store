@@ -27,11 +27,32 @@ type Client struct {
 }
 
 func NewClient(config ClientConfig, kvs *kvslib.KVS) *Client {
-	return nil
+	tracerConfig := tracing.TracerConfig{
+		ServerAddress: config.TracerServerAddr,
+		TracerIdentity: config.ClientID,
+		Secret: config.TracerSecret,
+	}
+	return &Client{
+		id: config.ClientID,
+		frontEndAddr: config.FrontEndAddr,
+		kvs: kvs,
+		tracerConfig: tracerConfig,
+		initialized: false,
+	}
 }
 
 func (c *Client) Initialize() error {
-	return errors.New("not implemented")
+	if c.initialized {
+		return errors.New("client has been initialized")
+	}
+	c.tracer = tracing.NewTracer(c.tracerConfig)
+	ch, err := c.kvs.Initialize(c.tracer, c.id, c.frontEndAddr, ChCapacity)
+	if err != nil {
+		return err
+	}
+	c.NotifyChannel = ch
+	c.initialized = true
+	return nil
 }
 
 func (c *Client) Get(clientId string, key string) (uint32, error) {
@@ -43,5 +64,12 @@ func (c *Client) Put(clientId string, key string, value string) (uint32, error) 
 }
 
 func (c *Client) Close() error {
-	return c.kvs.Close()
+	if err := c.kvs.Close(c.id); err != nil {
+		return err
+	}
+	if err := c.tracer.Close(); err != nil {
+		return err
+	}
+	c.initialized = false
+	return nil
 }
