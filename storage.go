@@ -91,12 +91,14 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	s.tracer = strace
 	s.memory = NewMemory()
 
-	s.readStorage()
+	trace := s.tracer.CreateTrace()
+	s.readStorage(trace)
+
 	return nil
 }
 
 // readStorage loads disk into memory
-func (s *Storage) readStorage() error {
+func (s *Storage) readStorage(trace *tracing.Trace) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -108,6 +110,10 @@ func (s *Storage) readStorage() error {
 		if err != nil {
 			return err
 		}
+		trace.RecordAction(StorageLoadSuccess{
+			State: make(map[string]string),
+		})
+
 		return nil
 	}
 
@@ -128,6 +134,10 @@ func (s *Storage) readStorage() error {
 
 	// load into memory
 	s.memory.Load(keyValuePairs)
+
+	trace.RecordAction(StorageLoadSuccess{
+		State: keyValuePairs,
+	})
 
 	return nil
 }
