@@ -9,3 +9,6 @@ tracing-server
 
 # logs
 *.log
+
+# IDE
+.idea
