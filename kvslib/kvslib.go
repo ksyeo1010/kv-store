@@ -58,6 +58,7 @@ type ResultStruct struct {
 }
 
 type KVS struct {
+	clientId		string
 	opId     		uint32
 	frontEndAddr	string
 	frontEnd 		*rpc.Client
@@ -69,6 +70,7 @@ type KVS struct {
 
 func NewKVS() *KVS {
 	return &KVS{
+		clientId: 		"",	
 		opId: 	  		0,
 		frontEndAddr: 	"",
 		frontEnd: 		nil,
@@ -117,6 +119,7 @@ func (d *KVS) Initialize(localTracer *tracing.Tracer, clientId string, frontEndA
 	d.frontEndAddr = frontEndAddr
 
 	// create local tracer
+	d.clientId = clientId
 	d.localTrace = localTracer.CreateTrace()
 	d.localTrace.RecordAction(KvslibBegin{ClientId: clientId})
 	d.frontEnd = frontEnd
@@ -186,10 +189,10 @@ func (d *KVS) callGet(trace *tracing.Trace, clientId string, opId uint32, key st
 	for {
 		select {
 		case <-call.Done:
-			trace.Tracer.ReceiveToken(result.RetToken)
 			if call.Error != nil {
 				log.Fatal(call.Error)
 			} else {
+				trace.Tracer.ReceiveToken(result.RetToken)
 				trace.RecordAction(KvslibGetResult{
 					OpId: opId,
 					Key: key,
@@ -264,13 +267,13 @@ func (d *KVS) callPut(trace *tracing.Trace, clientId string, opId uint32, key st
 // from delivering any solutions via the notify-channel. If there is an issue
 // with stopping, this should return an appropriate err value, otherwise err
 // should be set to nil.
-func (d *KVS) Close(clientId string) error {
+func (d *KVS) Close() error {
 	// notify all goroutines to close
 	close(d.closeCh)
 	d.closeWg.Wait()
 
 	// on close we log
-	d.localTrace.RecordAction(KvslibComplete{ClientId: clientId})
+	d.localTrace.RecordAction(KvslibComplete{ClientId: d.clientId})
 
 	// close frontend
 	if err := d.frontEnd.Close(); err != nil {

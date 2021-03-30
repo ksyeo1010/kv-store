@@ -64,7 +64,7 @@ func (c *Client) Put(clientId string, key string, value string) (uint32, error) 
 }
 
 func (c *Client) Close() error {
-	if err := c.kvs.Close(c.id); err != nil {
+	if err := c.kvs.Close(); err != nil {
 		return err
 	}
 	if err := c.tracer.Close(); err != nil {

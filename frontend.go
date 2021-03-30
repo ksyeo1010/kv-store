@@ -71,6 +71,11 @@ type GetResult struct {
 	RetToken	tracing.TracingToken
 }
 
+type GetStorageResult struct {
+	Value 		*string
+	RetToken	tracing.TracingToken
+}
+
 type PutArgs struct {
 	Key			string
 	Value		string
@@ -79,6 +84,10 @@ type PutArgs struct {
 
 type PutResult struct {
 	Err			bool
+	RetToken	tracing.TracingToken
+}
+
+type PutStorageResult struct {
 	RetToken	tracing.TracingToken
 }
 
@@ -93,10 +102,13 @@ type FrontEndRPCHandler struct {
 	localTrace		*tracing.Trace
 	storageTimeout 	uint8
 	storage			*rpc.Client
+	storageWaitCh	chan struct{}
 	storageTasks	StorageTasks
 }
 
 /******************/
+
+const NUM_RETRIES = 2
 
 func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, storageTimeout uint8, ftrace *tracing.Tracer) error {
 	trace := ftrace.CreateTrace()
@@ -107,6 +119,7 @@ func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, 
 		storageTasks: StorageTasks{
 			tasks: make(map[string]*RequestTask),
 		},
+		storageWaitCh: make(chan struct{}),
 	}
 
 	// register server
@@ -125,17 +138,21 @@ func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, 
 		return fmt.Errorf("failed to listen on %s: %s", storageAPIListenAddr, storageListener)
 	}
 
-	server.Accept(clientListener)
+	go server.Accept(clientListener)
 	server.Accept(storageListener)
 
 	return nil
 }
 
 func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
+
 	req := f.storageTasks.get(args.Key)
 
 	// lock
 	req.acquire()
+
+	// wait for storage
+	<- f.storageWaitCh
 
 	trace := f.ftrace.ReceiveToken(args.Token)
 	trace.RecordAction(FrontEndGet{Key: args.Key})
@@ -144,24 +161,44 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 		Key: args.Key,
 		Token: trace.GenerateToken(),
 	}
-	result := GetResult{}
+	result := GetStorageResult{}
 
 	// call storage
-	err := f.storage.Call("StorageRPCHandler.Get", callArgs, &result)
+	var is_err bool
 
-	trace.Tracer.ReceiveToken(result.RetToken)
-	if err != nil {
-		log.Fatal("error occured while calling storage")
-		return err
+	callLoop:
+	for i := 0; i < NUM_RETRIES; i++ {
+		trace.RecordAction(FrontEndStorageStarted{})
+
+		is_err = false
+		// call storage
+		callArgs.Token = trace.GenerateToken()
+		call := f.storage.Go("StorageRPCHandler.Get", callArgs, &result, nil)
+
+		select {
+		case <- call.Done:
+			trace.Tracer.ReceiveToken(result.RetToken)
+			if call.Error == nil {
+				break callLoop
+			}
+			log.Printf("error occured while calling storage: %s", call.Error.Error())
+			is_err = true
+		case <- time.After(time.Duration(f.storageTimeout) * time.Second):
+			log.Printf("timeout occurred")
+			is_err = true
+		}
+
+		trace.RecordAction(FrontEndStorageFailed{})
 	}
 
 	trace.RecordAction(FrontEndGetResult{
 		Key: args.Key,
 		Value: result.Value,
-		Err: result.Err,
+		Err: is_err,
 	})
+
 	reply.Value = result.Value
-	reply.Err = result.Err
+	reply.Err = is_err
 
 	reply.RetToken = trace.GenerateToken()
 
@@ -178,6 +215,9 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	// lock
 	req.acquire()
 
+	// wait for storage
+	<- f.storageWaitCh
+
 	trace := f.ftrace.ReceiveToken(args.Token)
 	trace.RecordAction(FrontEndPut{
 		Key: args.Key,
@@ -187,39 +227,41 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	callArgs := PutArgs{
 		Key: args.Key,
 		Value: args.Value,
-		Token: trace.GenerateToken(),
 	}
-	result := PutResult{}
+	result := PutStorageResult{}
 
-	// call storage
-	call := f.storage.Go("StorageRPCHandler.Put", callArgs, &result, nil)
+	var is_err bool
 
-	var err error = nil
-	select {
-	case <- call.Done:
-		trace.Tracer.ReceiveToken(result.RetToken)
-		if call.Error != nil {
-			err = call.Error
+	callLoop:
+	for i := 0; i < NUM_RETRIES; i++ {
+		trace.RecordAction(FrontEndStorageStarted{})
+
+		is_err = false
+		// call storage
+		callArgs.Token = trace.GenerateToken()
+		call := f.storage.Go("StorageRPCHandler.Put", callArgs, &result, nil)
+
+		select {
+		case <- call.Done:
+			if call.Error == nil {
+				break callLoop
+			}
+			trace.Tracer.ReceiveToken(result.RetToken)
+			log.Printf("error occurred while calling storage: %s", call.Error.Error())
+			is_err = true
+		case <- time.After(time.Duration(f.storageTimeout) * time.Second):
+			log.Printf("timeout occurred")
+			is_err = true
 		}
-	// set timeout
-	case <- time.After(time.Duration(f.storageTimeout) * time.Second):
-		trace.RecordAction(FrontEndPutResult{
-			Err: true,
-		})
-		reply.Err = true
-		// try put again
-		err = f.storage.Call("StorageRPCHandler.Put", callArgs, &result)
-	}
 
-	if err != nil {
-		log.Fatal("error occurred while calling storage")
-		return err
+		trace.RecordAction(FrontEndStorageFailed{})
 	}
+	
 
 	trace.RecordAction(FrontEndPutResult{
-		Err: result.Err,
+		Err: is_err,
 	})
-	reply.Err = result.Err
+	reply.Err = is_err
 	reply.RetToken = trace.GenerateToken()
 
 	// unlock
@@ -231,14 +273,20 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 
 func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) error {
 	storage, err := rpc.Dial("tcp", args.StorageAddr)
-
 	if err != nil {
 		return err
 	}
 
-	f.storage = storage
+	// close wait ch if it is open
+	select{
+	case <- f.storageWaitCh:
+		// do nothing
+	default:
+		close(f.storageWaitCh)
+	}
 
-	f.localTrace.RecordAction(FrontEndStorageStarted{})
+	log.Printf("storage connected on %s", args.StorageAddr)
+	f.storage = storage
 
 	return nil
 }

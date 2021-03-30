@@ -12,3 +12,9 @@ tracing-server
 
 # IDE
 .idea
+
+# smoke test
+gradera5-smoketest
+
+# local files
+data
