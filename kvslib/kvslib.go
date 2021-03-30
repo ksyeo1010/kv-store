@@ -66,6 +66,7 @@ type KVS struct {
 	closeCh  		CloseChannel
 	closeWg  		*sync.WaitGroup
 	localTrace		*tracing.Trace
+	mu				sync.Mutex
 }
 
 func NewKVS() *KVS {
@@ -299,8 +300,10 @@ func (d *KVS) checkConn() error {
 
 // getOpId gets the next operation ID
 func (d *KVS) getOpId() uint32 {
-	defer func() {
-		d.opId += 1
-	}()
-	return d.opId
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	oldOpId := d.opId
+	d.opId += 1
+	return oldOpId
 }
