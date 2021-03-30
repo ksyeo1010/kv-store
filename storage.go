@@ -52,7 +52,7 @@ type StorageGetArgs struct {
 
 type StorageGetReply struct {
 	Value			*string
-	Token 			tracing.TracingToken
+	RetToken 		tracing.TracingToken
 }
 
 type StoragePutArgs struct {
@@ -62,8 +62,7 @@ type StoragePutArgs struct {
 }
 
 type StoragePutReply struct {
-	Token 			tracing.TracingToken
-	Error 			error
+	RetToken 		tracing.TracingToken
 }
 
 type Storage struct {
@@ -114,6 +113,10 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 
 	// call frontend with port
 	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{StorageAddr: storageAddr}, &ConnectReply{})
+
+	// infinitely wait
+	stop := make(chan struct{})
+	<- stop
 
 	return nil
 }
@@ -185,7 +188,7 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 
 // Get is a blocking async RPC from the Frontend
 // fetching the value from memory
-func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) {
+func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) error {
 	trace := s.tracer.ReceiveToken(args.Token)
 
 	trace.RecordAction(StorageGet{
@@ -200,12 +203,14 @@ func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) {
 	})
 
 	reply.Value = value
-	reply.Token = trace.GenerateToken()
+	reply.RetToken = trace.GenerateToken()
+	
+	return nil
 }
 
 // Put is a blocking async RPC from the Frontend
 // saving a new value to storage and memory
-func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) {
+func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) error {
 	trace := s.tracer.ReceiveToken(args.Token)
 
 	trace.RecordAction(StoragePut{
@@ -214,14 +219,18 @@ func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) {
 	})
 
 	err := s.updateKVS(args.Key, args.Value)
+	if err != nil {
+		return err
+	}
 
 	trace.RecordAction(StorageSaveData{
 		Key: args.Key,
 		Value: args.Value,
 	})
 
-	reply.Token = trace.GenerateToken()
-	reply.Error = err
+	reply.RetToken = trace.GenerateToken()
+
+	return nil
 }
 
 func (s *StorageRPCHandler) updateKVS(key string, value string) error {
