@@ -89,8 +89,9 @@ type GetArgs struct {
 }
 
 type GetResult struct {
-	Value		*string
+	Value		string
 	Err			bool
+	Found		bool
 	RetToken	tracing.TracingToken
 }
 
@@ -193,17 +194,24 @@ func (d *KVS) callGet(trace *tracing.Trace, clientId string, opId uint32, key st
 				log.Fatal(call.Error)
 			} else {
 				trace.Tracer.ReceiveToken(result.RetToken)
+
+				// get value if found
+				var value *string = nil
+				if result.Found {
+					value = &result.Value
+				}
+
 				trace.RecordAction(KvslibGetResult{
 					OpId: opId,
 					Key: key,
-					Value: result.Value,
+					Value: value,
 					Err: result.Err,
 				})
 				// Assume value is nil if Err occurred
 				d.notifyCh <- ResultStruct{
 					OpId: opId,
 					StorageFail: result.Err,
-					Result: result.Value,
+					Result: value,
 				}
 			}
 			return

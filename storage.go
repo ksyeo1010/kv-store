@@ -51,7 +51,8 @@ type StorageGetArgs struct {
 }
 
 type StorageGetReply struct {
-	Value			*string
+	Value			string
+	Found			bool
 	RetToken 		tracing.TracingToken
 }
 
@@ -202,7 +203,11 @@ func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) err
 		Value: value,
 	})
 
-	reply.Value = value
+	if value != nil {
+		reply.Value = *value
+		reply.Found = true
+	}
+	
 	reply.RetToken = trace.GenerateToken()
 	
 	return nil
