@@ -99,6 +99,17 @@ type ConnectArgs struct {
 
 type ConnectReply struct {}
 
+type StorageStatus struct {
+	status           bool
+	mu               sync.Mutex
+}
+
+func NewStorageStatus() *StorageStatus {
+	return &StorageStatus{
+		status: false,
+	}
+}
+
 type FrontEndRPCHandler struct {
 	ftrace			*tracing.Tracer
 	localTrace		*tracing.Trace
@@ -106,6 +117,7 @@ type FrontEndRPCHandler struct {
 	storage			*rpc.Client
 	storageWaitCh	chan struct{}
 	storageTasks	StorageTasks
+	storageStatus   *StorageStatus
 }
 
 /******************/
@@ -122,6 +134,7 @@ func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, 
 			tasks: make(map[string]*RequestTask),
 		},
 		storageWaitCh: make(chan struct{}),
+		storageStatus: NewStorageStatus(),
 	}
 
 	// register server
@@ -151,12 +164,29 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 
 	// lock
 	req.acquire()
+	defer req.release()
 
 	// wait for storage
 	<- f.storageWaitCh
 
 	trace := f.ftrace.ReceiveToken(args.Token)
 	trace.RecordAction(FrontEndGet{Key: args.Key})
+
+	if !f.storageStatus.isStorageUp() {
+		trace.RecordAction(FrontEndGetResult{
+			Key: args.Key,
+			Value: nil,
+			Err: true,
+		})
+
+		// reply
+		reply.Err = true
+		reply.Found = false
+		reply.RetToken = trace.GenerateToken()
+
+		f.storageTasks.remove(args.Key)
+		return nil
+	}
 
 	callArgs := GetArgs{
 		Key: args.Key,
@@ -170,8 +200,6 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 
 	callLoop:
 	for i := 0; i < NUM_RETRIES; i++ {
-		trace.RecordAction(FrontEndStorageStarted{})
-
 		is_err = false
 		// call storage
 		callArgs.Token = trace.GenerateToken()
@@ -192,8 +220,10 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 			log.Printf("timeout occurred")
 			is_err = true
 		}
+	}
 
-		trace.RecordAction(FrontEndStorageFailed{})
+	if (is_err) {
+		f.storageStatus.updateStorageDown(f.localTrace)
 	}
 
 	trace.RecordAction(FrontEndGetResult{
@@ -208,8 +238,6 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	reply.Found = result.Found
 	reply.RetToken = trace.GenerateToken()
 
-	// unlock
-	req.release()
 	f.storageTasks.remove(args.Key)
 
 	return nil
@@ -220,6 +248,7 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 
 	// lock
 	req.acquire()
+	defer req.release()
 
 	// wait for storage
 	<- f.storageWaitCh
@@ -229,6 +258,19 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		Key: args.Key,
 		Value: args.Value,
 	})
+
+	if !f.storageStatus.isStorageUp() {
+		trace.RecordAction(FrontEndPutResult{
+			Err: true,
+		})
+
+		// reply
+		reply.Err = true
+		reply.RetToken = trace.GenerateToken()
+
+		f.storageTasks.remove(args.Key)
+		return nil
+	}
 
 	callArgs := PutArgs{
 		Key: args.Key,
@@ -240,8 +282,6 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 
 	callLoop:
 	for i := 0; i < NUM_RETRIES; i++ {
-		trace.RecordAction(FrontEndStorageStarted{})
-
 		is_err = false
 		// call storage
 		callArgs.Token = trace.GenerateToken()
@@ -249,20 +289,21 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 
 		select {
 		case <- call.Done:
+			trace = f.ftrace.ReceiveToken(result.RetToken)
 			if call.Error == nil {
 				break callLoop
 			}
-			trace.Tracer.ReceiveToken(result.RetToken)
 			log.Printf("error occurred while calling storage: %s", call.Error.Error())
 			is_err = true
 		case <- time.After(time.Duration(f.storageTimeout) * time.Second):
 			log.Printf("timeout occurred")
 			is_err = true
 		}
-
-		trace.RecordAction(FrontEndStorageFailed{})
 	}
-	
+	if (is_err) {
+		f.storageStatus.updateStorageDown(f.localTrace)
+	}
+
 	trace.RecordAction(FrontEndPutResult{
 		Err: is_err,
 	})
@@ -272,7 +313,6 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	reply.RetToken = trace.GenerateToken()
 
 	// unlock
-	req.release()
 	f.storageTasks.remove(args.Key)
 
 	return nil
@@ -284,6 +324,7 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) erro
 		return err
 	}
 
+	f.storageStatus.updateStorageUp(f.localTrace)
 	// close wait ch if it is open
 	select{
 	case <- f.storageWaitCh:
@@ -329,4 +370,31 @@ func (r *RequestTask) acquire() {
 func (r *RequestTask) release() {
 	r.requests -= 1
 	r.mu.Unlock()
+}
+
+func (s *StorageStatus) updateStorageUp(trace *tracing.Trace) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.status {
+		s.status = true
+		trace.RecordAction(FrontEndStorageStarted{})
+	}
+}
+
+func (s *StorageStatus) updateStorageDown(trace *tracing.Trace) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.status {
+		s.status = false
+		trace.RecordAction(FrontEndStorageFailed{})
+	}
+}
+
+func (s *StorageStatus) isStorageUp() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.status
 }
