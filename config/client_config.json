@@ -1,6 +1,6 @@
 {
   "ClientID": "client1",
-  "FrontEndAddr": "127.0.0.1:8000",
+  "FrontEndAddr": ":8000",
   "TracerServerAddr": ":6666",
   "TracerSecret": ""
 }

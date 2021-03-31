@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	distkvs "example.org/cpsc416/a5"
 	"example.org/cpsc416/a5/kvslib"
@@ -101,6 +102,8 @@ func main() {
 		length += len(cli.kva)
 
 		for _, kva := range cli.kva {
+			// add delay
+			time.Sleep(100 * time.Millisecond)
 			if kva.action == "get" {
 				if _, err := client.Get(cli.id, kva.key); err != nil {
 					log.Println(err)

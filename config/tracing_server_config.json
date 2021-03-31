@@ -1,5 +1,5 @@
 {
-    "ServerBind": "127.0.0.1:6666",
+    "ServerBind": ":6666",
     "Secret": "",
     "OutputFile": "trace_output.log",
     "ShivizOutputFile": "shiviz_output.log"
