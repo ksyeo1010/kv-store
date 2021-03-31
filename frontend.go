@@ -275,7 +275,6 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	callArgs := PutArgs{
 		Key: args.Key,
 		Value: args.Value,
-		Token: trace.GenerateToken(),
 	}
 	result := PutStorageResult{}
 
@@ -290,10 +289,10 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 
 		select {
 		case <- call.Done:
+			trace = f.ftrace.ReceiveToken(result.RetToken)
 			if call.Error == nil {
 				break callLoop
 			}
-			trace.Tracer.ReceiveToken(result.RetToken)
 			log.Printf("error occurred while calling storage: %s", call.Error.Error())
 			is_err = true
 		case <- time.After(time.Duration(f.storageTimeout) * time.Second):
