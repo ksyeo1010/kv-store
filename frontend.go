@@ -275,6 +275,7 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	callArgs := PutArgs{
 		Key: args.Key,
 		Value: args.Value,
+		Token: trace.GenerateToken(),
 	}
 	result := PutStorageResult{}
 
