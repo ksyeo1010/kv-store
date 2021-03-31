@@ -66,13 +66,15 @@ type GetArgs struct {
 }
 
 type GetResult struct {
-	Value		*string
+	Value		string
 	Err			bool
+	Found		bool
 	RetToken	tracing.TracingToken
 }
 
 type GetStorageResult struct {
-	Value 		*string
+	Value 		string
+	Found		bool
 	RetToken	tracing.TracingToken
 }
 
@@ -145,7 +147,6 @@ func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, 
 }
 
 func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
-
 	req := f.storageTasks.get(args.Key)
 
 	// lock
@@ -165,6 +166,7 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 
 	// call storage
 	var is_err bool
+	var value *string = nil
 
 	callLoop:
 	for i := 0; i < NUM_RETRIES; i++ {
@@ -179,6 +181,9 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 		case <- call.Done:
 			trace.Tracer.ReceiveToken(result.RetToken)
 			if call.Error == nil {
+				if result.Found {
+					value = &result.Value
+				}
 				break callLoop
 			}
 			log.Printf("error occured while calling storage: %s", call.Error.Error())
@@ -193,13 +198,14 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 
 	trace.RecordAction(FrontEndGetResult{
 		Key: args.Key,
-		Value: result.Value,
+		Value: value,
 		Err: is_err,
 	})
 
+	// reply
 	reply.Value = result.Value
 	reply.Err = is_err
-
+	reply.Found = result.Found
 	reply.RetToken = trace.GenerateToken()
 
 	// unlock
@@ -257,10 +263,11 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		trace.RecordAction(FrontEndStorageFailed{})
 	}
 	
-
 	trace.RecordAction(FrontEndPutResult{
 		Err: is_err,
 	})
+	
+	// reply
 	reply.Err = is_err
 	reply.RetToken = trace.GenerateToken()
 

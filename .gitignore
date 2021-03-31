@@ -15,6 +15,7 @@ tracing-server
 
 # smoke test
 gradera5-smoketest
+grade.txt
 
 # local files
 data

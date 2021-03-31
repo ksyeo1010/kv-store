@@ -1,6 +1,6 @@
 {
-  "ClientAPIListenAddr": ":8000",
-  "StorageAPIListenAddr": ":8001",
+  "ClientAPIListenAddr": "127.0.0.1:8000",
+  "StorageAPIListenAddr": "127.0.0.1:8001",
   "TracerServerAddr": ":6666",
   "TracerSecret": ""
 }
