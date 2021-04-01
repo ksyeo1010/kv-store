@@ -9,7 +9,7 @@ make
 sleep 2
 "./frontend" & f_pid=$!
 sleep 2
-"./storage" & s_pid=$!
+"./storage"& s_pid=$!
 sleep 2
 
 # run test and get smoke test output
