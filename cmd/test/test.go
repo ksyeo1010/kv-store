@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	distkvs "example.org/cpsc416/a5"
@@ -27,23 +28,25 @@ type Cli struct {
 // Req is a unique {clientID}:{action}:{key} to number map
 type Req map[string]uint
 
-func (r Req) getReq(id, action, key string) string {
-	// build map key
-	k := id + ":" + action + ":" + key
+func (r Req) addReq(id, action, key string) {
+	k := id + ":" + action + "-" + key
 
 	if _, ok := r[k]; !ok {
 		r[k] = 1
 	} else {
 		r[k] += 1
 	}
+}
 
-	return id + ":" + action + ":" + fmt.Sprintf("%v", r[k]) + ":" + key
+func (r Req)  buildReq(k string) string {
+	s := strings.Split(k, "-")
+	return s[0] + ":" + fmt.Sprintf("%v", r[k]) + ":" + s[1]
 }
 
 // cli1 performs some get and put requests
-func cli1() *Cli {
+func cli1(id string) *Cli {
 	return &Cli{
-		id: "clientID1",
+		id: id,
 		kva: []KVA{
 			{"get", "key1", ""},
 			{"put", "key1", "val1"},
@@ -55,9 +58,9 @@ func cli1() *Cli {
 }
 
 // cli2 performs 100 KVA put requests
-func cli2() *Cli {
+func cli2(id string) *Cli {
 	c := &Cli{}
-	c.id = "clientID2"
+	c.id = id
 
 	for i := 1; i <= 5; i++ {
 		kva := KVA{"put", "key" + fmt.Sprintf("%v", i), "val" + fmt.Sprintf("%v",i)}
@@ -68,9 +71,9 @@ func cli2() *Cli {
 }
 
 // cli3 performs 100 KVA get requests
-func cli3() *Cli {
+func cli3(id string) *Cli {
 	c := &Cli{}
-	c.id = "clientID3"
+	c.id = id
 
 	for i := 1; i <= 5; i++ {
 		kva := KVA{"get", "key" + fmt.Sprintf("%v", i), ""}
@@ -95,25 +98,27 @@ func main() {
 	}
 	defer client.Close()
 
-	clis := []*Cli{cli1(), cli2(), cli3()}
+	clis := []*Cli{cli1(config.ClientID), cli2(config.ClientID), cli3(config.ClientID)}
 
 	length := 0
 	for _, cli := range clis {
 		length += len(cli.kva)
 
-		for _, kva := range cli.kva {
-			// add delay
-			time.Sleep(100 * time.Millisecond)
-			if kva.action == "get" {
-				if _, err := client.Get(cli.id, kva.key); err != nil {
-					log.Println(err)
-				}
-			} else if kva.action == "put" {
-				if _, err := client.Put(cli.id, kva.key, kva.value); err != nil {
-					log.Println(err)
+		go func(cli *Cli) {
+			for _, kva := range cli.kva {
+				// add delay
+				time.Sleep(500 * time.Millisecond)
+				if kva.action == "get" {
+					if _, err := client.Get(cli.id, kva.key); err != nil {
+						log.Println(err)
+					}
+				} else if kva.action == "put" {
+					if _, err := client.Put(cli.id, kva.key, kva.value); err != nil {
+						log.Println(err)
+					}
 				}
 			}
-		}
+		}(cli)
 	} 
 
 	for i := 0; i < length; i++ {
@@ -132,10 +137,13 @@ func main() {
 
 	// build command
 	for _, cli := range clis {
-		arg2 += " --client-id " + cli.id
 		for _, kva := range cli.kva {
-			arg3 += " --req " + req.getReq(cli.id, kva.action, kva.key)
+			req.addReq(cli.id, kva.action, kva.key)
 		}
+	}
+
+	for k := range req {
+		arg3 += " --req " + req.buildReq(k)
 	}
 
 	// log for script usage

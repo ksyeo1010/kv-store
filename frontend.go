@@ -122,8 +122,6 @@ type FrontEndRPCHandler struct {
 
 /******************/
 
-const NUM_RETRIES = 2
-
 func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, storageTimeout uint8, ftrace *tracing.Tracer) error {
 	trace := ftrace.CreateTrace()
 	handler := &FrontEndRPCHandler{
@@ -164,7 +162,10 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 
 	// lock
 	req.acquire()
-	defer req.release()
+	defer func () {
+		req.release()
+		f.storageTasks.remove(args.Key)
+	}()
 
 	// wait for storage
 	<- f.storageWaitCh
@@ -184,7 +185,6 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 		reply.Found = false
 		reply.RetToken = trace.GenerateToken()
 
-		f.storageTasks.remove(args.Key)
 		return nil
 	}
 
@@ -197,33 +197,21 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	// call storage
 	var is_err bool
 	var value *string = nil
+	var err error
 
-	callLoop:
-	for i := 0; i < NUM_RETRIES; i++ {
-		is_err = false
-		// call storage
-		callArgs.Token = trace.GenerateToken()
-		call := f.storage.Go("StorageRPCHandler.Get", callArgs, &result, nil)
-
-		select {
-		case <- call.Done:
-			trace.Tracer.ReceiveToken(result.RetToken)
-			if call.Error == nil {
-				if result.Found {
-					value = &result.Value
-				}
-				break callLoop
-			}
-			log.Printf("error occured while calling storage: %s", call.Error.Error())
-			is_err = true
-		case <- time.After(time.Duration(f.storageTimeout) * time.Second):
-			log.Printf("timeout occurred")
-			is_err = true
-		}
+	err = f.storage.Call("StorageRPCHandler.Get", callArgs, &result)
+	if err != nil {
+		// retry after sleeping
+		time.Sleep(time.Duration(f.storageTimeout) * time.Second)
+		err = f.storage.Call("StorageRPCHandler.Get", callArgs, &result)
 	}
 
-	if (is_err) {
+	if err != nil {
+		is_err = true
 		f.storageStatus.updateStorageDown(f.localTrace)
+	} else {
+		trace = f.ftrace.ReceiveToken(result.RetToken)
+		value = &result.Value
 	}
 
 	trace.RecordAction(FrontEndGetResult{
@@ -238,8 +226,6 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	reply.Found = result.Found
 	reply.RetToken = trace.GenerateToken()
 
-	f.storageTasks.remove(args.Key)
-
 	return nil
 }
 
@@ -248,7 +234,10 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 
 	// lock
 	req.acquire()
-	defer req.release()
+	defer func () {
+		req.release()
+		f.storageTasks.remove(args.Key)
+	}()
 
 	// wait for storage
 	<- f.storageWaitCh
@@ -268,40 +257,32 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		reply.Err = true
 		reply.RetToken = trace.GenerateToken()
 
-		f.storageTasks.remove(args.Key)
 		return nil
 	}
 
 	callArgs := PutArgs{
 		Key: args.Key,
 		Value: args.Value,
+		Token: trace.GenerateToken(),
 	}
 	result := PutStorageResult{}
 
 	var is_err bool
+	var err error
 
-	callLoop:
-	for i := 0; i < NUM_RETRIES; i++ {
-		is_err = false
-		// call storage
-		callArgs.Token = trace.GenerateToken()
-		call := f.storage.Go("StorageRPCHandler.Put", callArgs, &result, nil)
-
-		select {
-		case <- call.Done:
-			trace = f.ftrace.ReceiveToken(result.RetToken)
-			if call.Error == nil {
-				break callLoop
-			}
-			log.Printf("error occurred while calling storage: %s", call.Error.Error())
-			is_err = true
-		case <- time.After(time.Duration(f.storageTimeout) * time.Second):
-			log.Printf("timeout occurred")
-			is_err = true
-		}
+	err = f.storage.Call("StorageRPCHandler.Put", callArgs, &result)
+	if err != nil {
+		// retry after sleeping
+		time.Sleep(time.Duration(f.storageTimeout) * time.Second)
+		err = f.storage.Call("StorageRPCHandler.Put", callArgs, &result)
 	}
-	if (is_err) {
+
+	// handle error conditions
+	if err != nil {
+		is_err = true
 		f.storageStatus.updateStorageDown(f.localTrace)
+	} else {
+		trace = f.ftrace.ReceiveToken(result.RetToken)
 	}
 
 	trace.RecordAction(FrontEndPutResult{
@@ -311,9 +292,6 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	// reply
 	reply.Err = is_err
 	reply.RetToken = trace.GenerateToken()
-
-	// unlock
-	f.storageTasks.remove(args.Key)
 
 	return nil
 }
