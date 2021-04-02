@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"example.org/cpsc416/a5/wrapper"
 	"github.com/DistributedClocks/tracing"
 )
 
@@ -123,7 +124,7 @@ type FrontEndRPCHandler struct {
 /******************/
 
 func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, storageTimeout uint8, ftrace *tracing.Tracer) error {
-	trace := ftrace.CreateTrace()
+	trace := wrapper.CreateTrace(ftrace)
 	handler := &FrontEndRPCHandler{
 		ftrace: ftrace,
 		localTrace: trace,
@@ -170,11 +171,11 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	// wait for storage
 	<- f.storageWaitCh
 
-	trace := f.ftrace.ReceiveToken(args.Token)
-	trace.RecordAction(FrontEndGet{Key: args.Key})
+	trace := wrapper.ReceiveToken(f.ftrace, args.Token)
+	wrapper.RecordAction(trace, FrontEndGet{Key: args.Key})
 
 	if !f.storageStatus.isStorageUp() {
-		trace.RecordAction(FrontEndGetResult{
+		wrapper.RecordAction(trace, FrontEndGetResult{
 			Key: args.Key,
 			Value: nil,
 			Err: true,
@@ -183,14 +184,14 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 		// reply
 		reply.Err = true
 		reply.Found = false
-		reply.RetToken = trace.GenerateToken()
+		reply.RetToken = wrapper.GenerateToken(trace)
 
 		return nil
 	}
 
 	callArgs := GetArgs{
 		Key: args.Key,
-		Token: trace.GenerateToken(),
+		Token: wrapper.GenerateToken(trace),
 	}
 	result := GetStorageResult{}
 
@@ -210,11 +211,11 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 		is_err = true
 		f.storageStatus.updateStorageDown(f.localTrace)
 	} else {
-		trace = f.ftrace.ReceiveToken(result.RetToken)
+		trace =wrapper.ReceiveToken(f.ftrace, result.RetToken)
 		value = &result.Value
 	}
 
-	trace.RecordAction(FrontEndGetResult{
+	wrapper.RecordAction(trace, FrontEndGetResult{
 		Key: args.Key,
 		Value: value,
 		Err: is_err,
@@ -224,7 +225,7 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	reply.Value = result.Value
 	reply.Err = is_err
 	reply.Found = result.Found
-	reply.RetToken = trace.GenerateToken()
+	reply.RetToken = wrapper.GenerateToken(trace)
 
 	return nil
 }
@@ -242,20 +243,20 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	// wait for storage
 	<- f.storageWaitCh
 
-	trace := f.ftrace.ReceiveToken(args.Token)
-	trace.RecordAction(FrontEndPut{
+	trace := wrapper.ReceiveToken(f.ftrace, args.Token)
+	wrapper.RecordAction(trace, FrontEndPut{
 		Key: args.Key,
 		Value: args.Value,
 	})
 
 	if !f.storageStatus.isStorageUp() {
-		trace.RecordAction(FrontEndPutResult{
+		wrapper.RecordAction(trace, FrontEndPutResult{
 			Err: true,
 		})
 
 		// reply
 		reply.Err = true
-		reply.RetToken = trace.GenerateToken()
+		reply.RetToken = wrapper.GenerateToken(trace)
 
 		return nil
 	}
@@ -263,7 +264,7 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	callArgs := PutArgs{
 		Key: args.Key,
 		Value: args.Value,
-		Token: trace.GenerateToken(),
+		Token: wrapper.GenerateToken(trace),
 	}
 	result := PutStorageResult{}
 
@@ -282,16 +283,16 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		is_err = true
 		f.storageStatus.updateStorageDown(f.localTrace)
 	} else {
-		trace = f.ftrace.ReceiveToken(result.RetToken)
+		trace = wrapper.ReceiveToken(trace.Tracer, result.RetToken)
 	}
 
-	trace.RecordAction(FrontEndPutResult{
+	wrapper.RecordAction(trace, FrontEndPutResult{
 		Err: is_err,
 	})
 	
 	// reply
 	reply.Err = is_err
-	reply.RetToken = trace.GenerateToken()
+	reply.RetToken = wrapper.GenerateToken(trace)
 
 	return nil
 }
@@ -356,7 +357,7 @@ func (s *StorageStatus) updateStorageUp(trace *tracing.Trace) {
 
 	if !s.status {
 		s.status = true
-		trace.RecordAction(FrontEndStorageStarted{})
+		wrapper.RecordAction(trace, FrontEndStorageStarted{})
 	}
 }
 
@@ -366,7 +367,7 @@ func (s *StorageStatus) updateStorageDown(trace *tracing.Trace) {
 
 	if s.status {
 		s.status = false
-		trace.RecordAction(FrontEndStorageFailed{})
+		wrapper.RecordAction(trace, FrontEndStorageFailed{})
 	}
 }
 

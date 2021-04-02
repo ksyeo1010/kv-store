@@ -3,13 +3,15 @@ package distkvs
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/DistributedClocks/tracing"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/rpc"
 	"os"
 	"sync"
+
+	"example.org/cpsc416/a5/wrapper"
+	"github.com/DistributedClocks/tracing"
 )
 
 type StorageConfig struct {
@@ -106,7 +108,7 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	}
 
 	// read storage from disk into memory
-	trace := s.tracer.CreateTrace()
+	trace := wrapper.CreateTrace(strace)
 	err = s.readStorage(trace)
 	if err != nil {
 		return fmt.Errorf("error reading storage from disk: %s", err)
@@ -155,7 +157,7 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 		if err != nil {
 			return err
 		}
-		trace.RecordAction(StorageLoadSuccess{
+		wrapper.RecordAction(trace, StorageLoadSuccess{
 			State: make(map[string]string),
 		})
 
@@ -180,7 +182,7 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 	// load into memory
 	s.memory.Load(keyValuePairs)
 
-	trace.RecordAction(StorageLoadSuccess{
+	wrapper.RecordAction(trace, StorageLoadSuccess{
 		State: keyValuePairs,
 	})
 
@@ -190,15 +192,15 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 // Get is a blocking async RPC from the Frontend
 // fetching the value from memory
 func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) error {
-	trace := s.tracer.ReceiveToken(args.Token)
+	trace := wrapper.ReceiveToken(s.tracer, args.Token)
 
-	trace.RecordAction(StorageGet{
+	wrapper.RecordAction(trace, StorageGet{
 		Key: args.Key,
 	})
 
 	value := s.memory.Get(args.Key)
 
-	trace.RecordAction(StorageGetResult{
+	wrapper.RecordAction(trace, StorageGetResult{
 		Key: args.Key,
 		Value: value,
 	})
@@ -208,7 +210,7 @@ func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) err
 		reply.Found = true
 	}
 	
-	reply.RetToken = trace.GenerateToken()
+	reply.RetToken = wrapper.GenerateToken(trace)
 	
 	return nil
 }
@@ -216,9 +218,9 @@ func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) err
 // Put is a blocking async RPC from the Frontend
 // saving a new value to storage and memory
 func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) error {
-	trace := s.tracer.ReceiveToken(args.Token)
+	trace := wrapper.ReceiveToken(s.tracer, args.Token)
 
-	trace.RecordAction(StoragePut{
+	wrapper.RecordAction(trace, StoragePut{
 		Key: args.Key,
 		Value: args.Value,
 	})
@@ -228,12 +230,12 @@ func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) err
 		return err
 	}
 
-	trace.RecordAction(StorageSaveData{
+	wrapper.RecordAction(trace, StorageSaveData{
 		Key: args.Key,
 		Value: args.Value,
 	})
 
-	reply.RetToken = trace.GenerateToken()
+	reply.RetToken = wrapper.GenerateToken(trace)
 
 	return nil
 }
