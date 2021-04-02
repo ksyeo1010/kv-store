@@ -5,7 +5,7 @@ import (
 	"log"
 
 	distkvs "example.org/cpsc416/a5"
-	"github.com/DistributedClocks/tracing"
+	// "github.com/DistributedClocks/tracing"
 )
 
 func main() {
@@ -17,14 +17,14 @@ func main() {
 
 	fmt.Println(config)
 
-	tracer := tracing.NewTracer(tracing.TracerConfig{
-		ServerAddress:  config.TracerServerAddr,
-		TracerIdentity: "frontend",
-		Secret:         config.TracerSecret,
-	})
+	// tracer := tracing.NewTracer(tracing.TracerConfig{
+	// 	ServerAddress:  config.TracerServerAddr,
+	// 	TracerIdentity: "frontend",
+	// 	Secret:         config.TracerSecret,
+	// })
 
 	frontend := distkvs.FrontEnd{}
-	err = frontend.Start(config.ClientAPIListenAddr, config.StorageAPIListenAddr, 2, tracer)
+	err = frontend.Start(config.ClientAPIListenAddr, config.StorageAPIListenAddr, 2, nil)
 
 	if err != nil {
 		log.Fatal(err)

@@ -286,6 +286,11 @@ func (d *KVS) Close() error {
 
 	// on close we log
 	wrapper.RecordAction(d.localTrace, KvslibComplete{ClientId: d.clientId})
+	
+	// close tracer
+	if err := wrapper.Close(d.localTrace.Tracer); err != nil {
+		return err
+	}
 
 	// close frontend
 	if err := d.frontEnd.Close(); err != nil {

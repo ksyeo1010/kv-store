@@ -12,7 +12,7 @@ func CreateTrace(tracer *tracing.Tracer) *tracing.Trace {
 
 func ReceiveToken(tracer *tracing.Tracer, retToken tracing.TracingToken) *tracing.Trace {
 	if tracer == nil {
-		return nil
+		return &tracing.Trace{Tracer: nil}
 	}
 	return tracer.ReceiveToken(retToken)
 }
@@ -28,4 +28,11 @@ func RecordAction(trace *tracing.Trace, lib interface{}) {
 	if trace.Tracer != nil {
 		trace.RecordAction(lib)
 	}
+}
+
+func Close(tracer *tracing.Tracer) error {
+	if tracer != nil {
+		return tracer.Close()
+	}
+	return nil
 }

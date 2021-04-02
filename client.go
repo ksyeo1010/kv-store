@@ -46,7 +46,7 @@ func (c *Client) Initialize() error {
 		return errors.New("client has been initialized")
 	}
 	c.tracer = tracing.NewTracer(c.tracerConfig)
-	ch, err := c.kvs.Initialize(c.tracer, c.id, c.frontEndAddr, ChCapacity)
+	ch, err := c.kvs.Initialize(nil, c.id, c.frontEndAddr, ChCapacity)
 	if err != nil {
 		return err
 	}
@@ -56,11 +56,11 @@ func (c *Client) Initialize() error {
 }
 
 func (c *Client) Get(clientId string, key string) (uint32, error) {
-	return c.kvs.Get(c.tracer, clientId, key)
+	return c.kvs.Get(nil, clientId, key)
 }
 
 func (c *Client) Put(clientId string, key string, value string) (uint32, error) {
-	return c.kvs.Put(c.tracer, clientId, key, value)
+	return c.kvs.Put(nil, clientId, key, value)
 }
 
 func (c *Client) Close() error {
