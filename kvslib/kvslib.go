@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"sync"
 
+	"example.org/cpsc416/a5/wrapper"
 	"github.com/DistributedClocks/tracing"
 )
 
@@ -122,8 +123,8 @@ func (d *KVS) Initialize(localTracer *tracing.Tracer, clientId string, frontEndA
 
 	// create local tracer
 	d.clientId = clientId
-	d.localTrace = localTracer.CreateTrace()
-	d.localTrace.RecordAction(KvslibBegin{ClientId: clientId})
+	d.localTrace = wrapper.CreateTrace(localTracer)
+	wrapper.RecordAction(d.localTrace, KvslibBegin{ClientId: clientId})
 	d.frontEnd = frontEnd
 
 	// create channels
@@ -139,7 +140,6 @@ func (d *KVS) Initialize(localTracer *tracing.Tracer, clientId string, frontEndA
 // Get is a non-blocking request from the client to the system. This call is used by
 // the client when it wants to get value for a key.
 func (d *KVS) Get(tracer *tracing.Tracer, clientId string, key string) (uint32, error) {
-	trace := tracer.CreateTrace()
 	// add to wg
 	d.closeWg.Add(1)
 
@@ -148,7 +148,7 @@ func (d *KVS) Get(tracer *tracing.Tracer, clientId string, key string) (uint32, 
 	}
 
 	opId := d.getOpId()
-	go d.callGet(trace, clientId, opId, key)
+	go d.callGet(tracer, clientId, opId, key)
 
 	return opId, nil
 }
@@ -157,7 +157,6 @@ func (d *KVS) Get(tracer *tracing.Tracer, clientId string, key string) (uint32, 
 // the client when it wants to update the value of an existing key or add add a new
 // key and value pair.
 func (d *KVS) Put(tracer *tracing.Tracer, clientId string, key string, value string) (uint32, error) {
-	trace := tracer.CreateTrace()
 	// add to wg
 	d.closeWg.Add(1)
 
@@ -166,17 +165,19 @@ func (d *KVS) Put(tracer *tracing.Tracer, clientId string, key string, value str
 	}
 
 	opId := d.getOpId()
-	go d.callPut(trace, clientId, opId, key, value)
+	go d.callPut(tracer, clientId, opId, key, value)
 
 	return opId, nil
 }
 
-func (d *KVS) callGet(trace *tracing.Trace, clientId string, opId uint32, key string) {
+func (d *KVS) callGet(tracer *tracing.Tracer, clientId string, opId uint32, key string) {
 	defer func() {
 		d.closeWg.Done()
 	}()
 
-	trace.RecordAction(KvslibGet{
+	trace := wrapper.CreateTrace(tracer)
+
+	wrapper.RecordAction(trace, KvslibGet{
 		ClientId: clientId,
 		OpId: opId,
 		Key: key,
@@ -184,7 +185,7 @@ func (d *KVS) callGet(trace *tracing.Trace, clientId string, opId uint32, key st
 
 	args := GetArgs{
 		Key: key,
-		Token: trace.GenerateToken(),
+		Token: wrapper.GenerateToken(trace),
 	}
 	result := GetResult{}
 	call := d.frontEnd.Go("FrontEndRPCHandler.Get", args, &result, nil)
@@ -194,7 +195,7 @@ func (d *KVS) callGet(trace *tracing.Trace, clientId string, opId uint32, key st
 			if call.Error != nil {
 				log.Fatal(call.Error)
 			} else {
-				trace.Tracer.ReceiveToken(result.RetToken)
+				trace = wrapper.ReceiveToken(trace.Tracer, result.RetToken)
 
 				// get value if found
 				var value *string = nil
@@ -202,7 +203,7 @@ func (d *KVS) callGet(trace *tracing.Trace, clientId string, opId uint32, key st
 					value = &result.Value
 				}
 
-				trace.RecordAction(KvslibGetResult{
+				wrapper.RecordAction(trace, KvslibGetResult{
 					OpId: opId,
 					Key: key,
 					Value: value,
@@ -223,12 +224,14 @@ func (d *KVS) callGet(trace *tracing.Trace, clientId string, opId uint32, key st
 	}
 }
 
-func (d *KVS) callPut(trace *tracing.Trace, clientId string, opId uint32, key string, value string) {
+func (d *KVS) callPut(tracer *tracing.Tracer, clientId string, opId uint32, key string, value string) {
 	defer func() {
 		d.closeWg.Done()
 	}()
 
-	trace.RecordAction(KvslibPut{
+	trace := wrapper.CreateTrace(tracer)
+
+	wrapper.RecordAction(trace, KvslibPut{
 		ClientId: clientId,
 		OpId: opId,
 		Key: key,
@@ -238,18 +241,18 @@ func (d *KVS) callPut(trace *tracing.Trace, clientId string, opId uint32, key st
 	args := PutArgs{
 		Key: key,
 		Value: value,
-		Token: trace.GenerateToken(),
+		Token: wrapper.GenerateToken(trace),
 	}
 	result := PutResult{}
 	call := d.frontEnd.Go("FrontEndRPCHandler.Put", args, &result, nil)
 	for {
 		select {
 		case <-call.Done:
-			trace.Tracer.ReceiveToken(result.RetToken)
 			if (call.Error != nil) {
 				log.Fatal(call.Error)
 			} else {
-				trace.RecordAction(KvslibPutResult{
+				trace = wrapper.ReceiveToken(trace.Tracer, result.RetToken)
+				wrapper.RecordAction(trace, KvslibPutResult{
 					OpId: opId,
 					Err: result.Err,
 				})
@@ -282,7 +285,7 @@ func (d *KVS) Close() error {
 	d.closeWg.Wait()
 
 	// on close we log
-	d.localTrace.RecordAction(KvslibComplete{ClientId: d.clientId})
+	wrapper.RecordAction(d.localTrace, KvslibComplete{ClientId: d.clientId})
 
 	// close frontend
 	if err := d.frontEnd.Close(); err != nil {
