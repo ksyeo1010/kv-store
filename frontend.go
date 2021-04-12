@@ -23,9 +23,13 @@ type FrontEndConfig struct {
 	TracerSecret         []byte
 }
 
-type FrontEndStorageStarted struct{}
+type FrontEndStorageStarted struct {
+	StorageID string
+}
 
-type FrontEndStorageFailed struct{}
+type FrontEndStorageFailed struct {
+	StorageID string
+}
 
 type FrontEndPut struct {
 	Key   string
@@ -44,6 +48,10 @@ type FrontEndGetResult struct {
 	Key   string
 	Value *string
 	Err   bool
+}
+
+type FrontEndStorageJoined struct {
+	StorageIds []string
 }
 
 type FrontEnd struct {
