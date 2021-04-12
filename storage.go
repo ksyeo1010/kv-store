@@ -115,7 +115,7 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	}
 
 	// call frontend with port
-	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{StorageAddr: storageAddr}, &ConnectReply{})
+	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{StorageAddr: StorageAddr(storageAddr)}, &ConnectReply{})
 
 	// infinitely wait
 	stop := make(chan struct{})
