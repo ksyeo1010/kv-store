@@ -25,26 +25,40 @@ type StorageConfig struct {
 }
 
 type StorageLoadSuccess struct {
-	State map[string]string
+	StorageID string
+	State     map[string]string
 }
 
 type StoragePut struct {
-	Key   string
-	Value string
+	StorageID string
+	Key       string
+	Value     string
 }
 
 type StorageSaveData struct {
-	Key   string
-	Value string
+	StorageID string
+	Key       string
+	Value     string
 }
 
 type StorageGet struct {
-	Key string
+	StorageID string
+	Key       string
 }
 
 type StorageGetResult struct {
-	Key   string
-	Value *string
+	StorageID string
+	Key       string
+	Value     *string
+}
+
+type StorageJoining struct {
+	StorageID string
+}
+
+type StorageJoined struct {
+	StorageID string
+	State     map[string]string
 }
 
 type StorageGetArgs struct {
@@ -68,6 +82,15 @@ type StoragePutReply struct {
 	RetToken 		tracing.TracingToken
 }
 
+type StorageInitializeArgs struct {
+	State     map[string]string
+	useExistingState bool
+}
+
+type StorageInitializeReply struct {
+
+}
+
 type Storage struct {
 	frontEndAddr    string
 	storageAddr     string
@@ -76,6 +99,7 @@ type Storage struct {
 	filePath        string
 	tracer			*tracing.Tracer
 	memory			*Memory
+	id              string
 }
 
 type StorageRPCHandler struct {
@@ -83,9 +107,10 @@ type StorageRPCHandler struct {
 	memory			*Memory
 	filePath        string
 	mu              sync.Mutex
+	isJoining 		bool
 }
 
-func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string, strace *tracing.Tracer) error {
+func (s *Storage) Start(storageId string, frontEndAddr string, storageAddr string, diskPath string, strace *tracing.Tracer) error {
 	// create RPC connection to frontend
 	frontEnd, err := rpc.Dial("tcp", frontEndAddr)
 	if err != nil {
@@ -100,6 +125,7 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	s.filePath = diskPath + "storage.json"
 	s.tracer = strace
 	s.memory = NewMemory()
+	s.id = storageId
 
 	// initialize RPC
 	err = s.initializeRPC()
@@ -113,6 +139,10 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	if err != nil {
 		return fmt.Errorf("error reading storage from disk: %s", err)
 	}
+
+	wrapper.RecordAction(trace, StorageJoining{
+		StorageID: s.id,
+	})
 
 	// call frontend with port
 	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{StorageAddr: StorageAddr(storageAddr)}, &ConnectReply{})
@@ -130,6 +160,7 @@ func (s *Storage) initializeRPC() error {
 		tracer: 	s.tracer,
 		memory:     s.memory,
 		filePath:   s.filePath,
+		isJoining:    true,
 	})
 
 	if err != nil {
@@ -240,10 +271,47 @@ func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) err
 	return nil
 }
 
-func (s *StorageRPCHandler) updateKVS(key string, value string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+//
+func (s *StorageRPCHandler) Initialize(args StorageInitializeArgs, reply *StorageInitializeReply) error {
+	if !args.useExistingState {
+		// update KVS
+		s.overwriteKVS(args.State)
 
+		// load into memory
+		s.memory.Load(args.State)
+	}
+
+	s.updateJoined()
+
+	//process put requests
+	//send request to frontend saying joined
+
+	return nil
+}
+
+func (s *StorageRPCHandler) overwriteKVS(state map[string]string) error {
+	// open file
+	jsonFile, err := os.Open(s.filePath)
+	if err != nil {
+		return err
+	}
+	defer jsonFile.Close()
+
+	// rewrite file
+	file, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(s.filePath, file, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *StorageRPCHandler) updateKVS(key string, value string) error {
 	// open file
 	jsonFile, err := os.Open(s.filePath)
 	if err != nil {
@@ -276,4 +344,18 @@ func (s *StorageRPCHandler) updateKVS(key string, value string) error {
 	s.memory.Put(key, value)
 
 	return nil
+}
+
+func (s *StorageRPCHandler) getJoining() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.isJoining
+}
+
+func (s *StorageRPCHandler) updateJoined() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.isJoining = false
 }
