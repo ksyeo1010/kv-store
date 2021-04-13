@@ -67,9 +67,14 @@ type StorageTasks struct {
 	tasks		map[string]*RequestTask
 }
 
+type StorageNodes struct {
+	mu              sync.Mutex
+	nodes			map[string]*StorageNode
+}
+
 type StorageNode struct {
-	mu      	sync.Mutex
-	nodes		map[string]*rpc.Client
+	client            *rpc.Client
+	joined          bool
 }
 
 /** RPC Structs **/
@@ -120,7 +125,7 @@ type FrontEndRPCHandler struct {
 	storageTimeout 	uint8
 	storageWaitCh	chan struct{}
 	storageTasks	*StorageTasks
-	storageNode     *StorageNode
+	storageNodes     *StorageNodes
 }
 
 /******************/
@@ -137,8 +142,8 @@ func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, 
 			tasks: make(map[string]*RequestTask),
 		},
 		storageWaitCh: make(chan struct{}),
-		storageNode: &StorageNode{
-			nodes: make(map[string]*rpc.Client),
+		storageNodes: &StorageNodes{
+			nodes: make(map[string]*StorageNode),
 		},
 	}
 
@@ -191,12 +196,12 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 
 	// we call it this way (only once in whole function) so we can avoid data race
 	// when a storage node is joining in the middle of computing
-	nodes := f.storageNode.getNodes()
+	nodes := f.storageNodes.getNodes()
 	for id, node := range nodes {
-		go func(id string, node *rpc.Client) {
+		go func(id string, node *StorageNode) {
 			result := GetStorageResult{}
 			for i := 0; i < NUM_RETRIES; i++ {
-				err := node.Call("StorageRPCHandler.Get", callArgs, &result)
+				err := node.client.Call("StorageRPCHandler.Get", callArgs, &result)
 				if err != nil {
 					resultCh <- &result
 					return
@@ -206,7 +211,7 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 				}
 			}
 			// remove since it is a failed one
-			f.storageNode.remove(trace, id)
+			f.storageNodes.remove(trace, id)
 			// we have error once we reach here
 			errorCh <- struct{}{}
 		}(id, node)
@@ -278,12 +283,12 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 
 	// we call it this way (only once in whole function) so we can avoid data race
 	// when a storage node is joining in the middle of computing
-	nodes := f.storageNode.getNodes()
+	nodes := f.storageNodes.getNodes()
 	for id, node := range nodes {
-		go func(id string, node *rpc.Client) {
+		go func(id string, node *StorageNode) {
 			result := PutStorageResult{}
 			for i := 0; i < NUM_RETRIES; i++ {
-				err := node.Call("StorageRPCHandler.Put", callArgs, &result)
+				err := node.client.Call("StorageRPCHandler.Put", callArgs, &result)
 				if err != nil {
 					resultCh <- &result
 					return
@@ -293,7 +298,7 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 				}
 			}
 			// remove since it is a failure
-			f.storageNode.remove(trace, id)
+			f.storageNodes.remove(trace, id)
 			// we have error once we reach here
 			errorCh <- struct{}{}
 		}(id, node)
@@ -329,7 +334,7 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) erro
 		return err
 	}
 
-	f.storageNode.add(f.localTrace, args.Id, storage)
+	f.storageNodes.add(f.localTrace, args.Id, storage)
 
 	// close wait ch if it is open
 	select{
@@ -383,43 +388,70 @@ func (r *RequestTask) release() {
 
 /** Storage node implementations **/
 
-func (s *StorageNode) getNodes() map[string]*rpc.Client {
+func (s *StorageNodes) getNodes() map[string]*StorageNode {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.nodes
 }
 
-func (s *StorageNode) add(trace *tracing.Trace, id string, storage *rpc.Client) {
+func (s *StorageNodes) add(trace *tracing.Trace, id string, storage *rpc.Client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if node, ok := s.nodes[id]; ok {
-		node.Close()
+		node.client.Close()
 	} else {
 		wrapper.RecordAction(trace, FrontEndStorageStarted{StorageID: id})
 	}
-	s.nodes[id] = storage
 
-	// get all keys
-	keys := make([]string, len(s.nodes))
-	for k := range s.nodes {
-		keys = append(keys, k)
+	s.nodes[id] = &StorageNode{
+		client: storage,
+		joined: false,
 	}
-
-	wrapper.RecordAction(trace, FrontEndStorageJoined{StorageIds: keys})
+	wrapper.RecordAction(trace, FrontEndStorageStarted{StorageID: id})
 }
 
-func (s *StorageNode) remove(trace *tracing.Trace, id string) {
+func (s *StorageNodes) storageNodeJoined(trace *tracing.Trace, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	node, ok := s.nodes[id]
+
+	if ok {
+		node.joined = true
+
+		keys := s.getJoinedStorageNodes()
+		wrapper.RecordAction(trace, FrontEndStorageJoined{StorageIds: keys})
+		return
+	}
+
+	log.Fatalf("Tried to update storage node to joined that doesn't exist %s.", id)
+}
+
+func (s *StorageNodes) remove(trace *tracing.Trace, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	
 	if node, ok := s.nodes[id]; ok {
-		node.Close()
+		node.client.Close()
 		delete(s.nodes, id)
-		wrapper.RecordAction(trace, FrontEndStorageFailed{StorageID: id})
+
+		keys := s.getJoinedStorageNodes()
+		wrapper.RecordAction(trace, FrontEndStorageJoined{StorageIds: keys})
 		return
 	}
 
 	log.Printf("Tried to remove nonexisting id %s.", id)
+}
+
+func (s *StorageNodes) getJoinedStorageNodes() []string {
+	keys := make([]string, len(s.nodes))
+	for k, node := range s.nodes {
+		if node.joined {
+			keys = append(keys, k)
+		}
+	}
+
+	return keys
 }
