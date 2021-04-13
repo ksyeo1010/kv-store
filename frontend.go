@@ -119,13 +119,21 @@ type ConnectArgs struct {
 
 type ConnectReply struct {}
 
+type JoinedArgs struct {
+	StorageID 	string
+}
+
+type JoinedReply struct {
+
+}
+
 type FrontEndRPCHandler struct {
 	ftrace			*tracing.Tracer
 	localTrace		*tracing.Trace
 	storageTimeout 	uint8
 	storageWaitCh	chan struct{}
 	storageTasks	*StorageTasks
-	storageNodes     *StorageNodes
+	storageNodes    *StorageNodes
 }
 
 /******************/
@@ -345,6 +353,12 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) erro
 	}
 
 	log.Printf("storage connected on %s", args.StorageAddr)
+
+	return nil
+}
+
+func (f *FrontEndRPCHandler) Joined(args JoinedArgs, reply *JoinedReply) error {
+	f.storageNodes.storageNodeJoined(f.localTrace, args.StorageID)
 
 	return nil
 }
