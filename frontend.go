@@ -63,8 +63,13 @@ type RequestTask struct {
 }
 
 type StorageTasks struct {
-	mu 		sync.Mutex
-	tasks	map[string]*RequestTask
+	mu 			sync.Mutex
+	tasks		map[string]*RequestTask
+}
+
+type StorageNode struct {
+	mu      	sync.Mutex
+	nodes		map[string]*rpc.Client
 }
 
 /** RPC Structs **/
@@ -108,11 +113,6 @@ type ConnectArgs struct {
 }
 
 type ConnectReply struct {}
-
-type StorageNode struct {
-	mu              sync.Mutex
-	nodes			map[string]*rpc.Client
-}
 
 type FrontEndRPCHandler struct {
 	ftrace			*tracing.Tracer
@@ -180,22 +180,6 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	trace := wrapper.ReceiveToken(f.ftrace, args.Token)
 	wrapper.RecordAction(trace, FrontEndGet{Key: args.Key})
 
-	// we call it this way so we can avoid strange behaviors
-	// when a storage node is joining in the middle of computing
-	nodes := f.storageNode.getNodes()
-
-	if len(nodes) == 0 {
-		wrapper.RecordAction(trace, FrontEndPutResult{
-			Err: true,
-		})
-
-		// reply
-		reply.Err = true
-		reply.RetToken = wrapper.GenerateToken(trace)
-
-		return nil
-	}
-
 	callArgs := GetArgs{
 		Key: args.Key,
 		Token: wrapper.GenerateToken(trace),
@@ -205,24 +189,27 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	resultCh := make(chan *GetStorageResult)
 	errorCh := make(chan struct{})
 
-	for _, node := range nodes {
-		go func(node *rpc.Client) {
+	// we call it this way (only once in whole function) so we can avoid data race
+	// when a storage node is joining in the middle of computing
+	nodes := f.storageNode.getNodes()
+	for id, node := range nodes {
+		go func(id string, node *rpc.Client) {
 			result := GetStorageResult{}
 			for i := 0; i < NUM_RETRIES; i++ {
 				err := node.Call("StorageRPCHandler.Get", callArgs, &result)
 				if err != nil {
 					resultCh <- &result
+					return
 				}
 				if i < NUM_RETRIES - 1 {
 					time.Sleep(time.Duration(f.storageTimeout) * time.Second)
 				}
 			}
-
+			// remove since it is a failed one
+			f.storageNode.remove(trace, id)
 			// we have error once we reach here
 			errorCh <- struct{}{}
-
-			// TODO: add some failure logging
-		}(node)
+		}(id, node)
 	}
 
 	var is_err bool = true
@@ -279,22 +266,6 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		Value: args.Value,
 	})
 
-	// we call it this way so we can avoid strange behaviors
-	// when a storage node is joining in the middle of computing
-	nodes := f.storageNode.getNodes()
-
-	if len(nodes) == 0 {
-		wrapper.RecordAction(trace, FrontEndPutResult{
-			Err: true,
-		})
-
-		// reply
-		reply.Err = true
-		reply.RetToken = wrapper.GenerateToken(trace)
-
-		return nil
-	}
-
 	callArgs := PutArgs{
 		Key: args.Key,
 		Value: args.Value,
@@ -305,24 +276,27 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 	resultCh := make(chan *PutStorageResult)
 	errorCh := make(chan struct{})
 
-	for _, node := range nodes {
-		go func(node *rpc.Client) {
+	// we call it this way (only once in whole function) so we can avoid data race
+	// when a storage node is joining in the middle of computing
+	nodes := f.storageNode.getNodes()
+	for id, node := range nodes {
+		go func(id string, node *rpc.Client) {
 			result := PutStorageResult{}
 			for i := 0; i < NUM_RETRIES; i++ {
 				err := node.Call("StorageRPCHandler.Put", callArgs, &result)
 				if err != nil {
 					resultCh <- &result
+					return
 				}
 				if i < NUM_RETRIES - 1 {
 					time.Sleep(time.Duration(f.storageTimeout) * time.Second)
 				}
 			}
-
+			// remove since it is a failure
+			f.storageNode.remove(trace, id)
 			// we have error once we reach here
 			errorCh <- struct{}{}
-
-			// TODO: add some failure logging
-		}(node)
+		}(id, node)
 	}
 
 	var is_err bool = true
@@ -420,14 +394,12 @@ func (s *StorageNode) add(trace *tracing.Trace, id string, storage *rpc.Client) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// we say if storage failed and rejoined while front end
-	// did not know, we are fine with it
-	if _, ok := s.nodes[id]; ok {
-		return
+	if node, ok := s.nodes[id]; ok {
+		node.Close()
+	} else {
+		wrapper.RecordAction(trace, FrontEndStorageStarted{StorageID: id})
 	}
-
 	s.nodes[id] = storage
-	wrapper.RecordAction(trace, FrontEndStorageStarted{StorageID: id})
 
 	// get all keys
 	keys := make([]string, len(s.nodes))
@@ -438,15 +410,16 @@ func (s *StorageNode) add(trace *tracing.Trace, id string, storage *rpc.Client) 
 	wrapper.RecordAction(trace, FrontEndStorageJoined{StorageIds: keys})
 }
 
-func (s *StorageNode) remove(id string) {
+func (s *StorageNode) remove(trace *tracing.Trace, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	
 	if node, ok := s.nodes[id]; ok {
 		node.Close()
 		delete(s.nodes, id)
+		wrapper.RecordAction(trace, FrontEndStorageFailed{StorageID: id})
 		return
 	}
 
-	log.Fatalf("Tried to remove nonexisting id %s.", id)
+	log.Printf("Tried to remove nonexisting id %s.", id)
 }
