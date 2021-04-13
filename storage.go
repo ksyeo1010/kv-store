@@ -25,26 +25,40 @@ type StorageConfig struct {
 }
 
 type StorageLoadSuccess struct {
-	State map[string]string
+	StorageID string
+	State     map[string]string
 }
 
 type StoragePut struct {
-	Key   string
-	Value string
+	StorageID string
+	Key       string
+	Value     string
 }
 
 type StorageSaveData struct {
-	Key   string
-	Value string
+	StorageID string
+	Key       string
+	Value     string
 }
 
 type StorageGet struct {
-	Key string
+	StorageID string
+	Key       string
 }
 
 type StorageGetResult struct {
-	Key   string
-	Value *string
+	StorageID string
+	Key       string
+	Value     *string
+}
+
+type StorageJoining struct {
+	StorageID string
+}
+
+type StorageJoined struct {
+	StorageID string
+	State     map[string]string
 }
 
 type StorageGetArgs struct {
@@ -76,6 +90,7 @@ type Storage struct {
 	filePath        string
 	tracer			*tracing.Tracer
 	memory			*Memory
+	id              string
 }
 
 type StorageRPCHandler struct {
@@ -85,7 +100,7 @@ type StorageRPCHandler struct {
 	mu              sync.Mutex
 }
 
-func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string, strace *tracing.Tracer) error {
+func (s *Storage) Start(storageId string, frontEndAddr string, storageAddr string, diskPath string, strace *tracing.Tracer) error {
 	// create RPC connection to frontend
 	frontEnd, err := rpc.Dial("tcp", frontEndAddr)
 	if err != nil {
@@ -100,6 +115,7 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	s.filePath = diskPath + "storage.json"
 	s.tracer = strace
 	s.memory = NewMemory()
+	s.id = storageId
 
 	// initialize RPC
 	err = s.initializeRPC()
@@ -113,6 +129,10 @@ func (s *Storage) Start(frontEndAddr string, storageAddr string, diskPath string
 	if err != nil {
 		return fmt.Errorf("error reading storage from disk: %s", err)
 	}
+
+	wrapper.RecordAction(trace, StorageJoining{
+		StorageID: s.id,
+	})
 
 	// call frontend with port
 	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{StorageAddr: StorageAddr(storageAddr)}, &ConnectReply{})
