@@ -82,6 +82,15 @@ type StoragePutReply struct {
 	RetToken 		tracing.TracingToken
 }
 
+type StorageInitializeArgs struct {
+	State     map[string]string
+	useExistingState bool
+}
+
+type StorageInitializeReply struct {
+
+}
+
 type Storage struct {
 	frontEndAddr    string
 	storageAddr     string
@@ -98,6 +107,7 @@ type StorageRPCHandler struct {
 	memory			*Memory
 	filePath        string
 	mu              sync.Mutex
+	isJoining 		bool
 }
 
 func (s *Storage) Start(storageId string, frontEndAddr string, storageAddr string, diskPath string, strace *tracing.Tracer) error {
@@ -150,6 +160,7 @@ func (s *Storage) initializeRPC() error {
 		tracer: 	s.tracer,
 		memory:     s.memory,
 		filePath:   s.filePath,
+		isJoining:    true,
 	})
 
 	if err != nil {
@@ -260,10 +271,47 @@ func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) err
 	return nil
 }
 
-func (s *StorageRPCHandler) updateKVS(key string, value string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+//
+func (s *StorageRPCHandler) Initialize(args StorageInitializeArgs, reply *StorageInitializeReply) error {
+	if !args.useExistingState {
+		// update KVS
+		s.overwriteKVS(args.State)
 
+		// load into memory
+		s.memory.Load(args.State)
+	}
+
+	s.updateJoined()
+
+	//process put requests
+	//send request to frontend saying joined
+
+	return nil
+}
+
+func (s *StorageRPCHandler) overwriteKVS(state map[string]string) error {
+	// open file
+	jsonFile, err := os.Open(s.filePath)
+	if err != nil {
+		return err
+	}
+	defer jsonFile.Close()
+
+	// rewrite file
+	file, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(s.filePath, file, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *StorageRPCHandler) updateKVS(key string, value string) error {
 	// open file
 	jsonFile, err := os.Open(s.filePath)
 	if err != nil {
@@ -296,4 +344,18 @@ func (s *StorageRPCHandler) updateKVS(key string, value string) error {
 	s.memory.Put(key, value)
 
 	return nil
+}
+
+func (s *StorageRPCHandler) getJoining() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.isJoining
+}
+
+func (s *StorageRPCHandler) updateJoined() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.isJoining = false
 }
