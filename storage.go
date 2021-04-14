@@ -83,11 +83,11 @@ type StoragePutReply struct {
 }
 
 type StorageStateReply struct {
-	State 	  		map[string]string
+	State 	  		string
 }
 
 type StorageInitializeArgs struct {
-	State   		map[string]string
+	State   		string
 	UseExistingState bool
 }
 
@@ -107,10 +107,13 @@ type Storage struct {
 }
 
 type StorageRPCHandler struct {
+	id				string
 	tracer          *tracing.Tracer
+	localTrace		*tracing.Trace
 	memory			*Memory
 	filePath        string
 	mu              sync.Mutex
+	joinCh			chan struct{}
 	isJoining 		bool
 }
 
@@ -131,14 +134,16 @@ func (s *Storage) Start(storageId string, frontEndAddr string, storageAddr strin
 	s.memory = NewMemory()
 	s.id = storageId
 
+
+	trace := wrapper.CreateTrace(strace)
+
 	// initialize RPC
-	err = s.initializeRPC()
+	err = s.initializeRPC(s.id, trace)
 	if err != nil {
 		return err
 	}
 
 	// read storage from disk into memory
-	trace := wrapper.CreateTrace(strace)
 	err = s.readStorage(trace)
 	if err != nil {
 		return fmt.Errorf("error reading storage from disk: %s", err)
@@ -158,12 +163,15 @@ func (s *Storage) Start(storageId string, frontEndAddr string, storageAddr strin
 	return nil
 }
 
-func (s *Storage) initializeRPC() error {
+func (s *Storage) initializeRPC(id string, trace *tracing.Trace) error {
 	server := rpc.NewServer()
 	err := server.Register(&StorageRPCHandler{
+		id:			id,
 		tracer: 	s.tracer,
+		localTrace: trace,
 		memory:     s.memory,
 		filePath:   s.filePath,
+		joinCh: 	make(chan struct{}),	
 		isJoining:    true,
 	})
 
@@ -229,15 +237,20 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 // Get is a blocking async RPC from the Frontend
 // fetching the value from memory
 func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) error {
+	// wait for join success
+	<- s.joinCh
+
 	trace := wrapper.ReceiveToken(s.tracer, args.Token)
 
 	wrapper.RecordAction(trace, StorageGet{
+		StorageID: s.id,
 		Key: args.Key,
 	})
 
 	value := s.memory.Get(args.Key)
 
 	wrapper.RecordAction(trace, StorageGetResult{
+		StorageID: s.id,
 		Key: args.Key,
 		Value: value,
 	})
@@ -255,9 +268,13 @@ func (s *StorageRPCHandler) Get(args StorageGetArgs, reply *StorageGetReply) err
 // Put is a blocking async RPC from the Frontend
 // saving a new value to storage and memory
 func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) error {
+	// wait for join success
+	<- s.joinCh
+
 	trace := wrapper.ReceiveToken(s.tracer, args.Token)
 
 	wrapper.RecordAction(trace, StoragePut{
+		StorageID: s.id,
 		Key: args.Key,
 		Value: args.Value,
 	})
@@ -268,6 +285,7 @@ func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) err
 	}
 
 	wrapper.RecordAction(trace, StorageSaveData{
+		StorageID: s.id,
 		Key: args.Key,
 		Value: args.Value,
 	})
@@ -278,21 +296,37 @@ func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) err
 }
 
 func (s *StorageRPCHandler) State(args struct{}, reply *StorageStateReply) error {
-	reply.State = s.memory.GetAll()
+	jsonString, err := json.Marshal(s.memory.GetAll())
+	if err != nil {
+		return err
+	}
+	reply.State = string(jsonString)
 	return nil
 }
 
 //
 func (s *StorageRPCHandler) Initialize(args StorageInitializeArgs, reply *StorageInitializeReply) error {
 	if !args.UseExistingState {
+		var keyValuePairs map[string]string
+		err := json.Unmarshal([]byte(args.State), &keyValuePairs)
+		if err != nil {
+			return err
+		}
 		// update KVS
-		s.overwriteKVS(args.State)
+		s.overwriteKVS(keyValuePairs)
 
 		// load into memory
-		s.memory.Load(args.State)
+		s.memory.Load(keyValuePairs)
 	}
 
 	s.updateJoined()
+
+	wrapper.RecordAction(s.localTrace, StorageJoined{
+		StorageID: s.id,
+		State: s.memory.GetAll(),
+	})
+
+	close(s.joinCh)
 
 	//process put requests
 	//send request to frontend saying joined

@@ -26,7 +26,15 @@
             "request": "launch",
             "mode": "debug",
             "cwd": "${workspaceFolder}",
-            "program": "${workspaceFolder}/cmd/storage/main.go"
+            "program": "${workspaceFolder}/cmd/storage/main.go",
+            "args": [
+                "--id",
+                "storage2",
+                "--listen",
+                "127.0.0.1:8012",
+                "--path",
+                "./data/s2"
+            ]
         },
         {
             "name": "test",
@@ -35,6 +43,14 @@
             "mode": "debug",
             "cwd": "${workspaceFolder}",
             "program": "${workspaceFolder}/cmd/test/test.go"
+        },
+        {
+            "name": "test_script",
+            "type": "python",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/test.py"
         }
     ]
 }
