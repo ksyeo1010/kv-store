@@ -62,7 +62,7 @@ func cli2(id string) *Cli {
 	c := &Cli{}
 	c.id = id
 
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 20; i++ {
 		kva := KVA{"put", "key" + fmt.Sprintf("%v", i), "val" + fmt.Sprintf("%v",i)}
 		c.kva = append(c.kva, kva)
 	}
@@ -75,7 +75,7 @@ func cli3(id string) *Cli {
 	c := &Cli{}
 	c.id = id
 
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 20; i++ {
 		kva := KVA{"get", "key" + fmt.Sprintf("%v", i), ""}
 		c.kva = append(c.kva, kva)
 	}
@@ -147,5 +147,5 @@ func main() {
 	}
 
 	// log for script usage
-	fmt.Fprintf(os.Stdout, "%s %s %s %s %s", arg0, arg1, arg2, arg3, "> grade.txt")
+	fmt.Fprintf(os.Stdout, "%s %s %s %s", arg0, arg1, arg2, arg3)
 }

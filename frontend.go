@@ -131,7 +131,6 @@ type FrontEndRPCHandler struct {
 	ftrace			*tracing.Tracer
 	localTrace		*tracing.Trace
 	storageTimeout 	uint8
-	storageWaitCh	chan struct{}
 	storageTasks	*StorageTasks
 	storageNodes    *StorageNodes
 }
@@ -149,7 +148,6 @@ func (*FrontEnd) Start(clientAPIListenAddr string, storageAPIListenAddr string, 
 		storageTasks: &StorageTasks{
 			tasks: make(map[string]*RequestTask),
 		},
-		storageWaitCh: make(chan struct{}),
 		storageNodes: &StorageNodes{
 			nodes: make(map[string]*StorageNode),
 		},
@@ -187,9 +185,6 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 		f.storageTasks.remove(args.Key)
 	}()
 
-	// wait for any storage
-	<- f.storageWaitCh
-
 	trace := wrapper.ReceiveToken(f.ftrace, args.Token)
 	wrapper.RecordAction(trace, FrontEndGet{Key: args.Key})
 
@@ -210,7 +205,7 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 			result := GetStorageResult{}
 			for i := 0; i < NUM_RETRIES; i++ {
 				err := node.client.Call("StorageRPCHandler.Get", callArgs, &result)
-				if err != nil {
+				if err == nil {
 					resultCh <- &result
 					return
 				}
@@ -236,12 +231,10 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 			// do nothing
 		case result := <- resultCh:
 			is_err = false
-			// we want to keep doing until we find some value in storage
-			if result.Found {
-				found = true
-				value = &result.Value
-				break resLoop
-			}
+			wrapper.ReceiveToken(trace.Tracer, result.RetToken)
+			found = true
+			value = &result.Value
+			break resLoop
 		}
 	}
 
@@ -272,9 +265,6 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		f.storageTasks.remove(args.Key)
 	}()
 
-	// wait for storage
-	<- f.storageWaitCh
-
 	trace := wrapper.ReceiveToken(f.ftrace, args.Token)
 	wrapper.RecordAction(trace, FrontEndPut{
 		Key: args.Key,
@@ -299,7 +289,7 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 			result := PutStorageResult{}
 			for i := 0; i < NUM_RETRIES; i++ {
 				err := node.client.Call("StorageRPCHandler.Put", callArgs, &result)
-				if err != nil {
+				if err == nil {
 					resultCh <- &result
 					return
 				}
@@ -321,7 +311,8 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		select{
 		case <- errorCh:
 			// do nothing
-		case <- resultCh:
+		case result := <- resultCh:
+			wrapper.ReceiveToken(trace.Tracer, result.RetToken)
 			is_err = false
 			break resLoop
 		}
@@ -343,18 +334,9 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) erro
 	if err != nil {
 		return err
 	}
-
 	
 	f.storageNodes.add(f.localTrace, args.Id, storage)
 	go f.initializeStorage(args.Id, storage)
-
-	// close wait ch if it is open
-	select{
-	case <- f.storageWaitCh:
-		// do nothing
-	default:
-		close(f.storageWaitCh)
-	}
 
 	log.Printf("%s connected on %s", args.Id, args.StorageAddr)
 
@@ -364,7 +346,7 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) erro
 func (f *FrontEndRPCHandler) initializeStorage(argsId string, storage *rpc.Client) {
 	nodes := f.storageNodes.getNodes()
 
-	var state map[string]string = nil
+	var state string
 	var useExistingState bool = true
 
 	result := StorageStateReply{}
@@ -373,10 +355,11 @@ func (f *FrontEndRPCHandler) initializeStorage(argsId string, storage *rpc.Clien
 			continue
 		}
 		// try to get first storage state that works
-		err := node.client.Call("StorageRPCHandler.State", nil, &result)
-		if err != nil {
+		err := node.client.Call("StorageRPCHandler.State", struct{}{}, &result)
+		if err == nil {
 			state = result.State
 			useExistingState = false
+			break
 		}
 	}
 
@@ -386,15 +369,9 @@ func (f *FrontEndRPCHandler) initializeStorage(argsId string, storage *rpc.Clien
 		UseExistingState: useExistingState,
 	}
 	err := storage.Call("StorageRPCHandler.Initialize", args, nil)
-	if err != nil {
+	if err == nil {
 		f.storageNodes.storageNodeJoined(f.localTrace, argsId)
 	}
-}
-
-func (f *FrontEndRPCHandler) Joined(args JoinedArgs, reply *JoinedReply) error {
-	f.storageNodes.storageNodeJoined(f.localTrace, args.StorageID)
-
-	return nil
 }
 
 /** storage tasks implementations **/
@@ -483,6 +460,7 @@ func (s *StorageNodes) remove(trace *tracing.Trace, id string) {
 	
 	if node, ok := s.nodes[id]; ok {
 		node.client.Close()
+		wrapper.RecordAction(trace, FrontEndStorageFailed{StorageID: id})
 		delete(s.nodes, id)
 
 		keys := s.getJoinedStorageNodes()
@@ -494,7 +472,7 @@ func (s *StorageNodes) remove(trace *tracing.Trace, id string) {
 }
 
 func (s *StorageNodes) getJoinedStorageNodes() []string {
-	keys := make([]string, len(s.nodes))
+	keys := make([]string, 0)
 	for k, node := range s.nodes {
 		if node.joined {
 			keys = append(keys, k)
