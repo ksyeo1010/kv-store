@@ -252,7 +252,9 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 	})
 
 	// reply
-	reply.Value = *value
+	if value != nil {
+		reply.Value = *value
+	}
 	reply.Err = is_err
 	reply.Found = found
 	reply.RetToken = wrapper.GenerateToken(trace)
@@ -342,7 +344,9 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) erro
 		return err
 	}
 
+	
 	f.storageNodes.add(f.localTrace, args.Id, storage)
+	go f.initializeStorage(args.Id, storage)
 
 	// close wait ch if it is open
 	select{
@@ -352,9 +356,39 @@ func (f *FrontEndRPCHandler) Connect(args ConnectArgs, reply *ConnectReply) erro
 		close(f.storageWaitCh)
 	}
 
-	log.Printf("storage connected on %s", args.StorageAddr)
+	log.Printf("%s connected on %s", args.Id, args.StorageAddr)
 
 	return nil
+}
+
+func (f *FrontEndRPCHandler) initializeStorage(argsId string, storage *rpc.Client) {
+	nodes := f.storageNodes.getNodes()
+
+	var state map[string]string = nil
+	var useExistingState bool = true
+
+	result := StorageStateReply{}
+	for id, node := range nodes {
+		if argsId == id {
+			continue
+		}
+		// try to get first storage state that works
+		err := node.client.Call("StorageRPCHandler.State", nil, &result)
+		if err != nil {
+			state = result.State
+			useExistingState = false
+		}
+	}
+
+	// if we reach here its the only one alive.
+	args := StorageInitializeArgs{
+		State: state,
+		UseExistingState: useExistingState,
+	}
+	err := storage.Call("StorageRPCHandler.Initialize", args, nil)
+	if err != nil {
+		f.storageNodes.storageNodeJoined(f.localTrace, argsId)
+	}
 }
 
 func (f *FrontEndRPCHandler) Joined(args JoinedArgs, reply *JoinedReply) error {
@@ -423,7 +457,7 @@ func (s *StorageNodes) add(trace *tracing.Trace, id string, storage *rpc.Client)
 		client: storage,
 		joined: false,
 	}
-	wrapper.RecordAction(trace, FrontEndStorageStarted{StorageID: id})
+	// wrapper.RecordAction(trace, FrontEndStorageStarted{StorageID: id})
 }
 
 func (s *StorageNodes) storageNodeJoined(trace *tracing.Trace, id string) {

@@ -82,9 +82,13 @@ type StoragePutReply struct {
 	RetToken 		tracing.TracingToken
 }
 
+type StorageStateReply struct {
+	State 	  		map[string]string
+}
+
 type StorageInitializeArgs struct {
-	State     map[string]string
-	useExistingState bool
+	State   		map[string]string
+	UseExistingState bool
 }
 
 type StorageInitializeReply struct {
@@ -145,7 +149,7 @@ func (s *Storage) Start(storageId string, frontEndAddr string, storageAddr strin
 	})
 
 	// call frontend with port
-	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{StorageAddr: StorageAddr(storageAddr)}, &ConnectReply{})
+	s.frontEnd.Call("FrontEndRPCHandler.Connect", ConnectArgs{Id: s.id, StorageAddr: StorageAddr(storageAddr)}, &ConnectReply{})
 
 	// infinitely wait
 	stop := make(chan struct{})
@@ -189,6 +193,7 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 			return err
 		}
 		wrapper.RecordAction(trace, StorageLoadSuccess{
+			StorageID: s.id,
 			State: make(map[string]string),
 		})
 
@@ -214,6 +219,7 @@ func (s *Storage) readStorage(trace *tracing.Trace) error {
 	s.memory.Load(keyValuePairs)
 
 	wrapper.RecordAction(trace, StorageLoadSuccess{
+		StorageID: s.id,
 		State: keyValuePairs,
 	})
 
@@ -271,9 +277,14 @@ func (s *StorageRPCHandler) Put(args StoragePutArgs, reply *StoragePutReply) err
 	return nil
 }
 
+func (s *StorageRPCHandler) State(args struct{}, reply *StorageStateReply) error {
+	reply.State = s.memory.GetAll()
+	return nil
+}
+
 //
 func (s *StorageRPCHandler) Initialize(args StorageInitializeArgs, reply *StorageInitializeReply) error {
-	if !args.useExistingState {
+	if !args.UseExistingState {
 		// update KVS
 		s.overwriteKVS(args.State)
 

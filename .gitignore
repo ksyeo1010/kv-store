@@ -14,7 +14,7 @@ tracing-server
 .idea
 
 # smoke test
-gradera5-smoketest
+gradera6-smoketest
 grade.txt
 
 # local files

@@ -40,3 +40,10 @@ func (m *Memory) Load(mem map[string]string) {
 
 	m.kvs = mem
 }
+
+func (m *Memory) GetAll() map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.kvs
+}
