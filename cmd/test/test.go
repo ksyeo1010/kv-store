@@ -130,9 +130,9 @@ func main() {
 
 	// start making exec command
 	// app := "/bin/sh"
-	arg0 := "./gradera5-smoketest"
-	arg1 := "--trace-file trace_output.log"
-	arg2 := "--client-id " + config.ClientID
+	arg0 := "./gradera6-smoketest"
+	arg1 := "-t trace_output.log"
+	arg2 := "-c " + config.ClientID
 	arg3 := ""
 
 	// build command
@@ -143,7 +143,7 @@ func main() {
 	}
 
 	for k := range req {
-		arg3 += " --req " + req.buildReq(k)
+		arg3 += " -r " + req.buildReq(k)
 	}
 
 	// log for script usage

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"flag"
 
 	distkvs "example.org/cpsc416/a5"
 	"github.com/DistributedClocks/tracing"
@@ -13,12 +14,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	flag.StringVar(&config.StorageID, "id", config.StorageID, "Storage ID, e.g. storage1")
+	flag.StringVar((*string)(&config.StorageAdd), "listen", string(config.StorageAdd), "Storage address, e.g. 127.0.0.1:5000")
+	flag.StringVar(&config.DiskPath, "path", config.DiskPath, "Disk path, e.g /tmp/newdir")
+	flag.Parse()
 
 	log.Println(config)
 
 	tracer := tracing.NewTracer(tracing.TracerConfig{
 		ServerAddress:  config.TracerServerAddr,
-		TracerIdentity: "storage",
+		TracerIdentity: config.StorageID,
 		Secret:         config.TracerSecret,
 	})
 
