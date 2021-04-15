@@ -9,7 +9,7 @@ import (
 	"net/rpc"
 	"sync"
 
-	"example.org/cpsc416/a5/wrapper"
+	"example.org/cpsc416/a6/wrapper"
 	"github.com/DistributedClocks/tracing"
 )
 
