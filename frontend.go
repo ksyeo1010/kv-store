@@ -206,7 +206,10 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 			for i := 0; i < NUM_RETRIES; i++ {
 				err := node.client.Call("StorageRPCHandler.Get", callArgs, &result)
 				if err == nil {
-					resultCh <- &result
+					wrapper.ReceiveToken(trace.Tracer, result.RetToken)
+					if node.joined {
+						resultCh <- &result
+					}
 					return
 				}
 				if i < NUM_RETRIES - 1 {
@@ -231,7 +234,6 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 			// do nothing
 		case result := <- resultCh:
 			is_err = false
-			wrapper.ReceiveToken(trace.Tracer, result.RetToken)
 			found = true
 			value = &result.Value
 			break resLoop
@@ -290,7 +292,10 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 			for i := 0; i < NUM_RETRIES; i++ {
 				err := node.client.Call("StorageRPCHandler.Put", callArgs, &result)
 				if err == nil {
-					resultCh <- &result
+					wrapper.ReceiveToken(trace.Tracer, result.RetToken)
+					if node.joined {
+						resultCh <- &result
+					}
 					return
 				}
 				if i < NUM_RETRIES - 1 {
@@ -311,8 +316,7 @@ func (f *FrontEndRPCHandler) Put(args PutArgs, reply *PutResult) error {
 		select{
 		case <- errorCh:
 			// do nothing
-		case result := <- resultCh:
-			wrapper.ReceiveToken(trace.Tracer, result.RetToken)
+		case <- resultCh:
 			is_err = false
 			break resLoop
 		}
@@ -351,7 +355,7 @@ func (f *FrontEndRPCHandler) initializeStorage(argsId string, storage *rpc.Clien
 
 	result := StorageStateReply{}
 	for id, node := range nodes {
-		if argsId == id {
+		if argsId == id || !node.joined {
 			continue
 		}
 		// try to get first storage state that works
@@ -434,7 +438,6 @@ func (s *StorageNodes) add(trace *tracing.Trace, id string, storage *rpc.Client)
 		client: storage,
 		joined: false,
 	}
-	// wrapper.RecordAction(trace, FrontEndStorageStarted{StorageID: id})
 }
 
 func (s *StorageNodes) storageNodeJoined(trace *tracing.Trace, id string) {
