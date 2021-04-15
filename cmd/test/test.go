@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	distkvs "example.org/cpsc416/a5"
-	"example.org/cpsc416/a5/kvslib"
+	distkvs "example.org/cpsc416/a6"
+	"example.org/cpsc416/a6/kvslib"
 )
 
 // KVA is a key-value action
