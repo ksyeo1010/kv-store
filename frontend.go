@@ -234,8 +234,10 @@ func (f *FrontEndRPCHandler) Get(args GetArgs, reply *GetResult) error {
 			// do nothing
 		case result := <- resultCh:
 			is_err = false
-			found = true
-			value = &result.Value
+			found = result.Found
+			if result.Found {
+				value = &result.Value
+			}
 			break resLoop
 		}
 	}
